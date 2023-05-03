@@ -1,0 +1,10 @@
+{
+    apps : [
+      {
+        name        : "Service Watcher",
+        script      : "main.py",
+        interpreter : "python3",
+        args        : "-s MYSQL"
+      }
+    ]
+  }

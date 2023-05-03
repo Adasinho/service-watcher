@@ -6,10 +6,57 @@ import subprocess
 import logging
 
 LOG_FILE_NAME = "service_watcher.log"
+ATTEMPTS_TO_RESTART = 3
 
-class Service(Enum):
+class LogLevel(Enum):
+    INFO = 0
+    WARNING = 1
+    ERROR = 2
+
+class ServiceType(Enum):
     MYSQL = "mysql.service"
     APACHE = "apache2.service"
+    
+class Service:
+    def __init__(self, serviceName):
+        self.serviceName = serviceName
+        self.serviceType = self.getServiceEnum()
+        self.restartCounter = 0
+        self.lastMessage = None
+        
+    def getServiceEnum(self):
+        return next((service for service in ServiceType if service.name == self.serviceName), None)
+    
+    def serviceIsOnline(self):
+        # return os.system(f'systemctl is-active --quiet {service}')
+        status = subprocess.call(["systemctl", "is-active", "--quiet", self.serviceType.value])
+        return True if not status else False
+    
+    def restartService(self):
+        if(self.restartCounter == 0):
+            logging.info(f'Trying restart process: {self.serviceType.value}')
+
+        if(self.restartCounter < ATTEMPTS_TO_RESTART):
+            subprocess.call(["systemctl", "start", self.serviceType.value])
+            
+            if self.serviceIsOnline():
+                self.restartCounter = 0
+                return True
+        elif(self.restartCounter == ATTEMPTS_TO_RESTART):
+            logging.warning(f'Can\'t restart process: {self.serviceType.value}')
+        
+        self.restartCounter += 1
+        return False
+    
+    def logStatus(self, logLevel: LogLevel, message: str):
+        if self.lastMessage != message:
+            self.lastMessage = message
+            if logLevel == LogLevel.INFO:
+                logging.info(message)
+            elif logLevel == LogLevel.WARNING:
+                logging.warning(message)
+            elif logLevel == LogLevel.ERROR:
+                logging.error(message)
     
 # Initiate the parser
 parser = argparse.ArgumentParser()
@@ -27,43 +74,27 @@ logging.basicConfig(filename=LOG_FILE_NAME,
                     datefmt='%H:%M:%S',
                     level=logging.DEBUG)
 
-def serviceIsOnline(serviceName):
-    # return os.system(f'systemctl is-active --quiet {service}')
-    status = subprocess.call(["systemctl", "is-active", "--quiet", serviceName])
-    return True if not status else False
+restartCounter = 0
 
-def restartService(serviceName):
-    RESTART_ATTEMPTS = 3
-    
-    for _ in range(RESTART_ATTEMPTS):
-        subprocess.call(["systemctl", "start", serviceName])
-        
-        if serviceIsOnline(serviceName):
-            return True
-    
-    return False
-
-def verifyService(serviceName):
-    if(serviceName == Service.MYSQL.name):
+def verifyService(serviceName: str):
+    if(serviceName == ServiceType.MYSQL.name):
         return True
-    elif(serviceName == Service.APACHE.name):
+    elif(serviceName == ServiceType.APACHE.name):
         return True
     else:
         return False
 
-def getServiceEnum(serviceName):
-    return next((service for service in Service if service.name == serviceName), None)
-
 if(verifyService(serviceParam)):
-    service: Service = getServiceEnum(serviceParam)
-    logging.info(f'Start application, watching service: {service.name}')
+    service: Service = Service(serviceParam)
+    logging.info(f'Start application, watching service: {service.serviceType.name}')
     
     while True:
-        status: bool = serviceIsOnline(service.value)
-        print(f'{service.name} status: {"online" if status else "offline"}')
+        status: bool = service.serviceIsOnline()
+        print(f'{service.serviceType.name} status: {"online" if status else "offline"}')
     
         if not status:
-            logging.error(f'{service.name} is offline')
+            service.logStatus(LogLevel.ERROR, f'{service.serviceType.name} is offline')
+            service.restartService()
         time.sleep(5.0)
 else:
     logging.error(f'Service with name: {serviceParam} unsupported')
